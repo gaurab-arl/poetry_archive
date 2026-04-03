@@ -5,7 +5,7 @@ export const poems = [
     tag: 'life',
     description: "A reflection on the pain of being buried alive, both literally and metaphorically.",
     poem: `
-    not always the face
+not always the face
 it’s my own head,  
 parts of a body,  
 and the rest.
