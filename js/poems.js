@@ -1,6 +1,39 @@
 export const poems = [
   {
     id: 24,
+    title: "Buried While Breathing",
+    tag: 'life',
+    description: "A reflection on the pain of being buried alive, both literally and metaphorically.",
+    poem: `
+    not always the face
+it’s my own head,  
+parts of a body,  
+and the rest.
+
+buried deep in woods,  
+pierced by thorns,
+some made of trust,  
+others of faith
+
+I thought some would help
+but none came to stop,
+as I continue to breathe,  
+each grain of soil  
+fills my coffin space.
+
+if a child saw this,  
+he might ask why  
+they buried a man alive
+
+some would say  
+it’s the price  
+of innocent dreams  
+in a world  
+that fattens on them
+`
+  },
+  {
+    id: 24,
     title: "A quiet room inside her",
     tag: 'life',
     description: "A reflection on a girl's inner world, her beauty, and the superficiality of those around her.",
