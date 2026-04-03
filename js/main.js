@@ -54,9 +54,12 @@ function render_disclamer() {
   disclamer.innerHTML = `
     <div class="disclamer-box">
       <span>DISCLAIMER</span>
+
       <p>This poem collection is based on the writer's experiences and emotions. It is not intended to hurt or target any person.</p>
       <p>In the poems, 'she' is an imaginary figure created to express feelings or fill emotional gaps.</p>
       <p>'She' may also represent people in general, not any specific individual.</p>
+
+      <span> CLICK ON READ BUTTON TO READ POEMS</span>
     </div>
   `;
 
