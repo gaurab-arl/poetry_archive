@@ -18,6 +18,9 @@
     rel="stylesheet">
   <!-- Favicon -->
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <!-- Music: preload audio file + run player script as early as possible -->
+  <link rel="preload" href="music/Cry - Cigarettes After Sex.mp3" as="audio" type="audio/mpeg">
+  <script src="js/music.js" async></script>
 
 </head>
 
@@ -100,8 +103,6 @@
   </script>
 
   <script type="module" src="js/main.js"></script>
-  <!-- Music Player (separate, standalone module) -->
-  <script src="js/music.js" defer></script>
 
 
 </body>

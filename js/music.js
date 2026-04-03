@@ -1,129 +1,137 @@
 /**
  * music.js — Ambient Music Player for Gaurab's Poetry Site
  *
- * Features:
- *  - Autoplay after 15 seconds (respects browser autoplay policy)
- *  - User can toggle music on / off
- *  - Multiple tracks playlist
- *  - Progress bar scrubbing
- *  - Volume control
- *  - Animated visualizer
- *  - Persistent mute preference via localStorage
+ * Cross-page continuity: saves playback position + state to localStorage
+ * on page unload and restores it instantly on the next page load,
+ * so music appears seamless across navigation.
  */
 
 (function MusicPlayer() {
     'use strict';
 
-    /* ── Playlist ─────────────────────────────────────────── */
-    const TRACKS = [
-        {
-            title: 'Cry',
-            artist: 'Cigarettes After Sex',
-            src: 'music/Cry - Cigarettes After Sex.mp3',
-            emoji: '🌙'
-        },
-        // Add more tracks here in the future:
-        // { title: 'Song Title', artist: 'Artist', src: 'music/filename.mp3', emoji: '🎵' },
-    ];
+    /* ── Storage keys ─────────────────────────────────────── */
+    const KEY_TIME    = 'gaurab_music_time';
+    const KEY_PLAYING = 'gaurab_music_playing';
 
-    /* ── State ────────────────────────────────────────────── */
-    let currentIndex = 0;
-    let isPlaying = false;
-    let autoplayTimer = null;
-    let isMuted = false;
-    let cardOpen = false;
-    const AUTOPLAY_DELAY_MS = 15000; // 15 seconds
-
-    /* ── Audio engine ─────────────────────────────────────── */
-    const audio = new Audio();
-    audio.loop = false;
-    audio.volume = 0.55;
-    audio.preload = 'metadata';
-
-    function loadTrack(index) {
-        currentIndex = index;
-        const t = TRACKS[index];
-        audio.src = t.src;
-        updateTrackInfo();
-        updateTrackList();
-        resetProgress();
+    /* ── Resolve asset root (works from any subfolder depth) ─ */
+    function resolveRoot() {
+        const base = document.querySelector('base');
+        if (base) return base.href;
+        const depth = (window.location.pathname.match(/\//g) || []).length - 1;
+        let root = './';
+        for (let i = 0; i < depth; i++) root = '../' + root;
+        return root;
     }
 
-    function playTrack() {
-        const promise = audio.play();
-        if (promise !== undefined) {
-            promise.then(() => {
-                isPlaying = true;
-                updatePlayBtn();
-                startVisualizer();
-            }).catch(() => {
-                isPlaying = false;
-                updatePlayBtn();
-            });
+    const ROOT = resolveRoot();
+
+    /* ── Single track ─────────────────────────────────────── */
+    const TRACK = {
+        title:  'Cry',
+        artist: 'Cigarettes After Sex',
+        src:    ROOT + 'music/Cry - Cigarettes After Sex.mp3',
+        emoji:  '🌙'
+    };
+
+    /* ── State ────────────────────────────────────────────── */
+    let isPlaying   = false;
+    let cardOpen    = false;
+    let autoTimer   = null;
+    const AUTOPLAY_DELAY_MS = 15000;
+
+    /* ── Audio engine ─────────────────────────────────────── */
+    const audio     = new Audio();
+    audio.loop      = true;
+    audio.volume    = 0.55;
+    audio.preload   = 'auto';
+    audio.src       = TRACK.src;
+
+    /* ── Read saved state before building UI ─────────────── */
+    const savedTime    = parseFloat(localStorage.getItem(KEY_TIME)    || '0');
+    const wasPlaying   = localStorage.getItem(KEY_PLAYING) === 'true';
+
+    /* Seek immediately — browsers allow setting currentTime before canplay.
+       If it fails (e.g. no buffered data yet), retry on canplay once. */
+    if (savedTime > 0) {
+        try {
+            audio.currentTime = savedTime;
+        } catch (_) {
+            audio.addEventListener('canplay', () => {
+                audio.currentTime = savedTime;
+            }, { once: true });
         }
+    }
+
+    /* ── Save state right before any page unload ──────────── */
+    window.addEventListener('beforeunload', () => {
+        localStorage.setItem(KEY_TIME,    audio.currentTime);
+        localStorage.setItem(KEY_PLAYING, isPlaying ? 'true' : 'false');
+    });
+
+    /* ── Also intercept <a> clicks for same-origin links ─── */
+    // This fires slightly earlier than beforeunload and is more reliable
+    // when the browser caches the referer page aggressively.
+    document.addEventListener('click', (e) => {
+        const link = e.target.closest('a[href]');
+        if (!link) return;
+        const href = link.getAttribute('href');
+        // Only save for same-site navigation, ignore anchors / external
+        if (href && !href.startsWith('#') && !href.startsWith('http')) {
+            localStorage.setItem(KEY_TIME,    audio.currentTime);
+            localStorage.setItem(KEY_PLAYING, isPlaying ? 'true' : 'false');
+        }
+    }, true); // capture phase so it runs before any other handler
+
+    /* ── Play / Stop ──────────────────────────────────────── */
+    function playTrack() {
+        audio.play().then(() => {
+            isPlaying = true;
+            updateUI();
+        }).catch(() => {
+            isPlaying = false;
+            updateUI();
+        });
+    }
+
+    function stopTrack() {
+        audio.pause();
+        audio.currentTime = 0;
+        isPlaying = false;
+        localStorage.setItem(KEY_TIME,    '0');
+        localStorage.setItem(KEY_PLAYING, 'false');
+        updateUI();
     }
 
     function pauseTrack() {
         audio.pause();
         isPlaying = false;
-        updatePlayBtn();
-        stopVisualizer();
+        updateUI();
     }
 
     function togglePlayPause() {
-        if (isPlaying) {
-            pauseTrack();
-        } else {
-            playTrack();
-        }
+        isPlaying ? pauseTrack() : playTrack();
     }
 
-    function nextTrack() {
-        const next = (currentIndex + 1) % TRACKS.length;
-        loadTrack(next);
-        if (isPlaying) playTrack();
-    }
-
-    function prevTrack() {
-        // If more than 3 seconds in, restart; else go to prev
-        if (audio.currentTime > 3) {
-            audio.currentTime = 0;
-        } else {
-            const prev = (currentIndex - 1 + TRACKS.length) % TRACKS.length;
-            loadTrack(prev);
-            if (isPlaying) playTrack();
-        }
-    }
-
-    /* ── DOM references ───────────────────────────────────── */
-    let elCard, elToggleBtn, elPlayPause, elPrev, elNext;
-    let elProgress, elCurrTime, elDuration;
-    let elVolume, elVolIcon;
-    let elTitle, elArtist, elArt, elNote;
-    let elVisualizer, elTrackList;
-    let elToast;
+    /* ── DOM refs ─────────────────────────────────────────── */
+    let elCard, elToggleBtn, elPlayStop, elStopBtn;
+    let elProgress, elCurrTime, elDuration, elToast;
 
     /* ── Build HTML ───────────────────────────────────────── */
     function buildPlayer() {
         const container = document.createElement('div');
         container.id = 'music-player';
         container.innerHTML = `
-            <!-- Expanded Card -->
             <div id="music-card">
                 <div class="music-track-info">
                     <div class="music-art" id="music-art">
-                        <span class="music-note-icon" id="music-note">🎵</span>
+                        <span class="music-note-icon">${TRACK.emoji}</span>
                     </div>
                     <div class="music-text">
-                        <div class="music-title" id="music-title">Loading…</div>
-                        <div class="music-artist" id="music-artist">—</div>
+                        <div class="music-title">${TRACK.title}</div>
+                        <div class="music-artist">${TRACK.artist}</div>
                     </div>
-                    <div class="music-visualizer paused" id="music-visualizer">
-                        <div class="vis-bar"></div>
-                        <div class="vis-bar"></div>
-                        <div class="vis-bar"></div>
-                        <div class="vis-bar"></div>
-                    </div>
+                    <button class="music-stop-btn" id="music-stop-btn"
+                            title="Stop music" aria-label="Stop music">⏹</button>
                 </div>
 
                 <div class="music-progress-wrap">
@@ -136,266 +144,132 @@
                 </div>
 
                 <div class="music-controls">
-                    <button class="music-btn" id="music-prev" title="Previous" aria-label="Previous track">⏮</button>
-                    <button class="music-btn play-pause-btn" id="music-play-pause" title="Play / Pause" aria-label="Play or pause">▶</button>
-                    <button class="music-btn" id="music-next" title="Next" aria-label="Next track">⏭</button>
+                    <button class="music-btn play-pause-btn" id="music-play-stop"
+                            aria-label="Play">▶ Play</button>
                 </div>
-
-                <div class="music-volume-row">
-                    <span class="volume-icon" id="music-vol-icon" title="Toggle mute">🔊</span>
-                    <input type="range" class="music-volume-bar" id="music-volume"
-                           min="0" max="1" step="0.01" value="0.55" aria-label="Volume">
-                </div>
-
-                <div class="music-track-list" id="music-track-list"></div>
             </div>
 
-            <!-- Toggle pill button -->
-            <button id="music-toggle-btn" aria-label="Toggle music player" title="Music Player">
+            <button id="music-toggle-btn" aria-label="Toggle music player">
                 <span class="btn-icon">🎵</span>
-                <span class="btn-label" id="music-btn-label">Now Playing</span>
+                <span class="btn-label">Ambient Music</span>
             </button>`;
 
         document.body.appendChild(container);
 
-        // Autoplay toast
         const toast = document.createElement('div');
         toast.id = 'music-autoplay-toast';
         toast.innerHTML = `
             <span class="toast-icon">🎵</span>
-            <span class="toast-text">Music is starting… click the player to control it.</span>`;
+            <span class="toast-text">Music started — click the player to control it.</span>`;
         document.body.appendChild(toast);
 
-        // Cache refs
-        elCard = document.getElementById('music-card');
+        elCard      = document.getElementById('music-card');
         elToggleBtn = document.getElementById('music-toggle-btn');
-        elPlayPause = document.getElementById('music-play-pause');
-        elPrev = document.getElementById('music-prev');
-        elNext = document.getElementById('music-next');
-        elProgress = document.getElementById('music-progress');
-        elCurrTime = document.getElementById('music-curr-time');
-        elDuration = document.getElementById('music-duration');
-        elVolume = document.getElementById('music-volume');
-        elVolIcon = document.getElementById('music-vol-icon');
-        elTitle = document.getElementById('music-title');
-        elArtist = document.getElementById('music-artist');
-        elArt = document.getElementById('music-art');
-        elNote = document.getElementById('music-note');
-        elVisualizer = document.getElementById('music-visualizer');
-        elTrackList = document.getElementById('music-track-list');
-        elToast = document.getElementById('music-autoplay-toast');
+        elPlayStop  = document.getElementById('music-play-stop');
+        elStopBtn   = document.getElementById('music-stop-btn');
+        elProgress  = document.getElementById('music-progress');
+        elCurrTime  = document.getElementById('music-curr-time');
+        elDuration  = document.getElementById('music-duration');
+        elToast     = document.getElementById('music-autoplay-toast');
 
         bindEvents();
-        loadTrack(0);
-        scheduleAutoplay();
-        restorePreferences();
+
+        /* ── Resume or schedule ───────────────────────────── */
+        if (wasPlaying) {
+            // Was playing on the previous page — resume immediately
+            playTrack();
+            openCard();
+        } else {
+            // First visit or user had stopped — wait 15s then autoplay
+            autoTimer = setTimeout(() => {
+                playTrack();
+                showToast();
+                openCard();
+            }, AUTOPLAY_DELAY_MS);
+        }
     }
 
     /* ── Events ───────────────────────────────────────────── */
     function bindEvents() {
-        // Toggle card open/close
         elToggleBtn.addEventListener('click', toggleCard);
 
-        // Play/Pause
-        elPlayPause.addEventListener('click', (e) => {
+        elPlayStop.addEventListener('click', (e) => {
             e.stopPropagation();
             togglePlayPause();
         });
 
-        // Prev / Next
-        elPrev.addEventListener('click', (e) => { e.stopPropagation(); prevTrack(); });
-        elNext.addEventListener('click', (e) => { e.stopPropagation(); nextTrack(); });
+        elStopBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            stopTrack();
+        });
 
-        // Progress scrub
         elProgress.addEventListener('input', () => {
             if (!isNaN(audio.duration)) {
                 audio.currentTime = (elProgress.value / 100) * audio.duration;
             }
         });
 
-        // Volume
-        elVolume.addEventListener('input', () => {
-            audio.volume = parseFloat(elVolume.value);
-            isMuted = audio.volume === 0;
-            updateVolIcon();
-            savePreferences();
-        });
-
-        // Mute toggle via icon
-        elVolIcon.addEventListener('click', () => {
-            isMuted = !isMuted;
-            audio.muted = isMuted;
-            updateVolIcon();
-            savePreferences();
-        });
-
-        // Audio events
-        audio.addEventListener('timeupdate', onTimeUpdate);
-        audio.addEventListener('loadedmetadata', onMetadataLoaded);
-        audio.addEventListener('ended', onTrackEnded);
-        audio.addEventListener('error', onAudioError);
-
-        // Close card when clicking outside
-        document.addEventListener('click', (e) => {
-            if (cardOpen && !document.getElementById('music-player').contains(e.target)) {
-                closeCard();
+        audio.addEventListener('timeupdate', () => {
+            if (!isNaN(audio.duration) && audio.duration > 0) {
+                elProgress.value       = (audio.currentTime / audio.duration) * 100;
+                elCurrTime.textContent = formatTime(audio.currentTime);
             }
         });
+
+        audio.addEventListener('loadedmetadata', () => {
+            elDuration.textContent = formatTime(audio.duration);
+        });
+
+        audio.addEventListener('error', () => {
+            console.warn('MusicPlayer: could not load', TRACK.src);
+        });
+
+        document.addEventListener('click', (e) => {
+            const inPlayer = document.getElementById('music-player').contains(e.target);
+            if (cardOpen && !inPlayer) closeCard();
+        });
     }
 
-    /* ── Card open/close ──────────────────────────────────── */
-    function toggleCard() {
-        cardOpen ? closeCard() : openCard();
-    }
+    /* ── Card toggle ──────────────────────────────────────── */
+    function toggleCard() { cardOpen ? closeCard() : openCard(); }
+    function openCard()   { cardOpen = true;  elCard.classList.add('open'); }
+    function closeCard()  { cardOpen = false; elCard.classList.remove('open'); }
 
-    function openCard() {
-        cardOpen = true;
-        elCard.classList.add('open');
-    }
-
-    function closeCard() {
-        cardOpen = false;
-        elCard.classList.remove('open');
-    }
-
-    /* ── UI updates ───────────────────────────────────────── */
-    function updateTrackInfo() {
-        const t = TRACKS[currentIndex];
-        elTitle.textContent = t.title;
-        elArtist.textContent = t.artist;
-        elNote.textContent = t.emoji || '🎵';
-        document.getElementById('music-btn-label').textContent = t.title;
-    }
-
-    function updatePlayBtn() {
-        elPlayPause.textContent = isPlaying ? '⏸' : '▶';
-        elPlayPause.title = isPlaying ? 'Pause' : 'Play';
-    }
-
-    function updateVolIcon() {
-        if (isMuted || audio.volume === 0) {
-            elVolIcon.textContent = '🔇';
-        } else if (audio.volume < 0.4) {
-            elVolIcon.textContent = '🔈';
-        } else if (audio.volume < 0.75) {
-            elVolIcon.textContent = '🔉';
+    /* ── UI sync ──────────────────────────────────────────── */
+    function updateUI() {
+        const art = document.getElementById('music-art');
+        if (isPlaying) {
+            elPlayStop.textContent  = '⏸ Pause';
+            elPlayStop.title        = 'Pause';
+            elStopBtn.style.opacity = '1';
+            art.classList.add('spinning');
         } else {
-            elVolIcon.textContent = '🔊';
+            elPlayStop.textContent  = '▶ Play';
+            elPlayStop.title        = 'Play';
+            elStopBtn.style.opacity = '0.45';
+            art.classList.remove('spinning');
         }
     }
 
-    function resetProgress() {
-        elProgress.value = 0;
-        elCurrTime.textContent = '0:00';
-        elDuration.textContent = '0:00';
+    /* ── Toast ────────────────────────────────────────────── */
+    function showToast() {
+        elToast.classList.add('show');
+        setTimeout(() => elToast.classList.remove('show'), 4200);
     }
 
-    function onTimeUpdate() {
-        if (!isNaN(audio.duration) && audio.duration > 0) {
-            const pct = (audio.currentTime / audio.duration) * 100;
-            elProgress.value = pct;
-            elCurrTime.textContent = formatTime(audio.currentTime);
-        }
-    }
-
-    function onMetadataLoaded() {
-        elDuration.textContent = formatTime(audio.duration);
-    }
-
-    function onTrackEnded() {
-        nextTrack();
-        if (TRACKS.length > 1) playTrack();
-        else { isPlaying = false; updatePlayBtn(); stopVisualizer(); }
-    }
-
-    function onAudioError() {
-        console.warn('MusicPlayer: could not load audio file.');
-    }
-
+    /* ── Helpers ──────────────────────────────────────────── */
     function formatTime(s) {
         if (isNaN(s)) return '0:00';
-        const m = Math.floor(s / 60);
+        const m   = Math.floor(s / 60);
         const sec = Math.floor(s % 60);
         return `${m}:${sec.toString().padStart(2, '0')}`;
     }
 
-    /* ── Track list ───────────────────────────────────────── */
-    function updateTrackList() {
-        elTrackList.innerHTML = TRACKS.map((t, i) => `
-            <div class="track-item ${i === currentIndex ? 'active' : ''}"
-                 data-idx="${i}" role="button" tabindex="0" aria-label="Play ${t.title}">
-                <span class="track-num">${i === currentIndex ? '▶' : (i + 1)}</span>
-                <span class="track-name">${t.title} — ${t.artist}</span>
-            </div>`).join('');
-
-        elTrackList.querySelectorAll('.track-item').forEach(el => {
-            el.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const idx = parseInt(el.dataset.idx, 10);
-                loadTrack(idx);
-                playTrack();
-            });
-            el.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') el.click();
-            });
-        });
-    }
-
-    /* ── Visualizer ───────────────────────────────────────── */
-    function startVisualizer() {
-        elVisualizer.classList.remove('paused');
-    }
-
-    function stopVisualizer() {
-        elVisualizer.classList.add('paused');
-    }
-
-    /* ── Autoplay after 15 s ──────────────────────────────── */
-    function scheduleAutoplay() {
-        // Only if the user hasn't explicitly turned music off
-        const pref = localStorage.getItem('gaurab_music_off');
-        if (pref === 'true') return;
-
-        autoplayTimer = setTimeout(() => {
-            playTrack();
-            showToast();
-            openCard();
-        }, AUTOPLAY_DELAY_MS);
-    }
-
-    function showToast() {
-        elToast.classList.add('show');
-        setTimeout(() => elToast.classList.remove('show'), 4000);
-    }
-
-    /* ── Preferences ──────────────────────────────────────── */
-    function savePreferences() {
-        localStorage.setItem('gaurab_music_vol', audio.volume);
-        localStorage.setItem('gaurab_music_muted', isMuted);
-    }
-
-    function restorePreferences() {
-        const vol = parseFloat(localStorage.getItem('gaurab_music_vol'));
-        if (!isNaN(vol)) {
-            audio.volume = vol;
-            elVolume.value = vol;
-        }
-        const muted = localStorage.getItem('gaurab_music_muted') === 'true';
-        if (muted) {
-            isMuted = true;
-            audio.muted = true;
-        }
-        updateVolIcon();
-    }
-
     /* ── Init ─────────────────────────────────────────────── */
-    function init() {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', buildPlayer);
-        } else {
-            buildPlayer();
-        }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', buildPlayer);
+    } else {
+        buildPlayer();
     }
 
-    init();
 })();
